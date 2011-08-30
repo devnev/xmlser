@@ -112,5 +112,13 @@ class SerializationTests(unittest.TestCase):
         ser = xmlser.Serializer("<root<~.?&.?>>")
         self.assertEqual(ser.serialize({'a':1}), "<root><a>1</a></root>")
 
+    def test_ind_tag(self):
+        ser = xmlser.Serializer("<.?>")
+        self.assertEqual(ser.serialize('a'), "<a></a>")
+
+    def test_ind_attr(self):
+        ser = xmlser.Serializer('<root=.?"test">')
+        self.assertEqual(ser.serialize('a'), '<root a="test"></root>')
+
 if __name__ == "__main__":
     unittest.main()

@@ -376,6 +376,19 @@ class Serializer(object):
         stream.write(u'>')
 
     def serialize(self, obj, stream=None, encoding=None):
+        """
+        Serialize an object to XML using this serializer's format string.
+
+        If a stream is given, the result is encoded (encoding defaults to
+        sys.getfilesystemencoding) and written to the stream.
+
+        If no stream is given, the result is returned, either as a unicode
+        string or encoded using the requested encoding.
+
+        In any case, if the result is encoded, it is prefixed with an xml
+        version tag containing the encoding, e.g. for UTF-8:
+            <?xml version="1.0" encoding="UTF-8" ?>
+        """
         if stream is None and encoding is None:
             _stream = _ListStream()
         elif stream is None:
