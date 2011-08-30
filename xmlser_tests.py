@@ -65,7 +65,7 @@ class SerializationTests(unittest.TestCase):
         self.cmp_none(ser, exp)
 
     def test_attr_obj(self):
-        ser = xmlser.Serializer("<root<sub=attr.?>>")
+        ser = xmlser.Serializer("<root<sub=attr?>>")
         exp = u"<root><sub attr=\"%s\"></sub></root>"
         self.cmp_obj(ser, exp)
 
@@ -85,7 +85,7 @@ class SerializationTests(unittest.TestCase):
         self.cmp_none(ser, exp)
 
     def test_content_obj(self):
-        ser = xmlser.Serializer("<root&.?>")
+        ser = xmlser.Serializer("<root&?>")
         exp = u"<root>%s</root>"
         self.cmp_obj(ser, exp)
 
@@ -100,24 +100,24 @@ class SerializationTests(unittest.TestCase):
         self.cmp_listitem(ser, exp)
 
     def test_rep_list(self):
-        ser = xmlser.Serializer("<root<sub*.?&.?>>")
+        ser = xmlser.Serializer("<root<sub*?&?>>")
         self.assertEqual(ser.serialize(['a', 'b']), "<root><sub>a</sub><sub>b</sub></root>")
 
     def test_rep_dict(self):
-        ser = xmlser.Serializer("<root<sub*.?=k.0=v.1>>")
+        ser = xmlser.Serializer("<root<sub*?=k.0=v.1>>")
         self.assertEqual(ser.serialize({'a':1, 'b':2}),
                          '<root><sub k="a" v="1"></sub><sub k="b" v="2"></sub></root>')
 
     def test_sub_dicttag(self):
-        ser = xmlser.Serializer("<root<~.?&.?>>")
+        ser = xmlser.Serializer("<root<~?&?>>")
         self.assertEqual(ser.serialize({'a':1}), "<root><a>1</a></root>")
 
     def test_ind_tag(self):
-        ser = xmlser.Serializer("<.?>")
+        ser = xmlser.Serializer("<?>")
         self.assertEqual(ser.serialize('a'), "<a></a>")
 
     def test_ind_attr(self):
-        ser = xmlser.Serializer('<root=.?"test">')
+        ser = xmlser.Serializer('<root=?"test">')
         self.assertEqual(ser.serialize('a'), '<root a="test"></root>')
 
 if __name__ == "__main__":

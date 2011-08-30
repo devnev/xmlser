@@ -165,10 +165,6 @@ class Serializer(object):
             except IndexError as e:
                 raise KeyError(str(e))
 
-        elif self.fmt[idx] == '?':
-            # identity operation
-            return idx + 1, obj
-
         else:
             raise InvalidAttribute(self.fmt, idx)
 
@@ -180,6 +176,10 @@ class Serializer(object):
             while self.fmt[idx] == '.':
                 idx, obj = self._get(idx+1, obj)
             return idx, obj
+
+        elif self.fmt[idx] == '?':
+            # identity operation
+            return idx + 1, obj
 
         elif self.fmt[idx] == '"':
             # quoted string literal
@@ -208,15 +208,22 @@ class Serializer(object):
             raise InvalidValue(self.fmt, idx)
 
     def _list(self, idx, obj):
-        """Get a list, e.g. for repetition. Always returns a list so index lookup is possible"""
+        """Get a list for repetition."""
 
         if self.fmt[idx] == '.':
             # lookup object
-            idx, res = self._get(idx+1, obj)
-            if hasattr(res, 'items'):
-                # if its a mapping, get an item list
-                res = res.items()
-            return idx, res
+            while self.fmt[idx] == '.':
+                idx, obj = self._get(idx+1, obj)
+            # if its a mapping, get a (key, value) iterable
+            if hasattr(obj, 'items'):
+                obj = obj.items()
+            return idx, obj
+
+        elif self.fmt[idx] == '?':
+            # identity operation
+            if hasattr(obj, 'items'):
+                obj = obj.items()
+            return idx + 1, obj
 
         elif self.fmt[idx].isdigit():
             # repeat a fix number of times
