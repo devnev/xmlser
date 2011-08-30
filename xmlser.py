@@ -336,7 +336,7 @@ class Serializer(object):
             if not obj or obj is _skip:
                 # empty dict or skipping, parse to get end position but discard
                 # ":" is just an arbitrary valid tag name, it is discarded anyway
-                idx = self._tag_rest(idx, ":", cur, _skip)
+                return self._tag_rep(idx, ":", cur, _skip)
             else:
                 idx_ = idx
                 for k, v in obj.iteritems():

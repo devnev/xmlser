@@ -120,5 +120,17 @@ class SerializationTests(unittest.TestCase):
         ser = xmlser.Serializer('<root=?"test">')
         self.assertEqual(ser.serialize('a'), '<root a="test"></root>')
 
+    def test_empty_listrep(self):
+        ser = xmlser.Serializer('<root<sub*?><a>>')
+        self.assertEqual(ser.serialize([]), '<root><a></a></root>')
+
+    def test_empty_dictrep(self):
+        ser = xmlser.Serializer('<root<sub*?><a>>')
+        self.assertEqual(ser.serialize({}), '<root><a></a></root>')
+
+    def test_empty_dictkeyrep(self):
+        ser = xmlser.Serializer('<root<~?&?><a>>')
+        self.assertEqual(ser.serialize({}), '<root><a></a></root>')
+
 if __name__ == "__main__":
     unittest.main()
