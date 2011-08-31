@@ -87,3 +87,44 @@ XML::
  <doc><item name="1"></item><item id="name"></item><name></name></doc>
  >>> ser('<doc<item=?"1">>', "a&b")
  ValueError: XML attribute name contains invalid characters
+
+Looking Up Values
+-----------------
+
+Attribute, key and index lookups can be performed using the dot (".") operator::
+
+ >>> ser('<doc<item&.content>>', {"content": "Ich habe eine Nase!"})
+ <doc><item>Ich habe eine Nas!</item></doc>
+ >>> ser('<doc<item&.0>>', ["Chuchichästli"])
+ <doc><item>Chuchichästli</item></doc>
+
+They can easily be chained::
+
+ >>> ser('<doc<item&.content.0>>', {"content": ["Kilimanjaro"]})
+ <doc><item>Kilimanjaro</item></doc>
+
+Repeating yourself
+------------------
+
+Two forms of repetition are available: "list" and "dictkey". The difference
+lies in what is repeated: "list" creates many of the same tags, one for each
+list element. "dictkey" creates a tag corresponding to each key::
+
+ >>> ser('<longest_rivers<river*?&?>>', [u"النيل", u"Amazonas", u"长/長江"])
+ <longest_rivers><river>ﺎﻠﻨﻴﻟ</river><river>Amazonas</river><river>长/長江</river></longest_rivers>
+ >>> ser('<person<~?&?>>', {"fullname": "Thomas Anderson", "title": "Mr.", "nick": "Neo"})
+ <person><nick>Neo</nick><fullname>Thomas Anderson</fullname><title>Mr.</title></person>
+
+Within the repeated tags, the current element from the repetition is the
+current object for lookups (in the case of "dictkey" repetitions, this is the
+corresponding value).
+
+Conditionals
+------------
+
+TODO
+
+Exceptions
+----------
+
+TODO
