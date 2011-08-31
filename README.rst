@@ -19,7 +19,7 @@ xmlser - Fomat String for XML Serialization
 What's this About?
 ==================
 
-xmlser is a python library for making generating XML less painful.
+xmlser is a python library that makes generating XML less painful.
 
 Generating XML from python objects can and will never be as easy as generating
 JSON or YAML without heavy restriction on the resulting XML. Instead, this
