@@ -20,6 +20,8 @@ import collections
 
 class SerializationFormatError(ValueError):
     def __init__(self, msg, fmt, idx):
+        self.fmt = fmt
+        self.idx = idx
         ValueError.__init__(self, "%s at %d around %r, %r" % (msg, idx, fmt[max(idx-10, 0):idx], fmt[idx:idx+10]))
 
 class InvalidAttribute(SerializationFormatError):
@@ -245,8 +247,9 @@ class Serializer(object):
 
         try:
             idx, attr = self._val(idx, obj)
-        except InvalidValue:
-            raise InvalidName(self.fmt, idx, "Invalid attribute name")
+        except InvalidValue as e:
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            raise InvalidName(e.fmt, e.idx, "Invalid attribute name"), None, exc_traceback
 
         idx, v = self._val(idx, obj)
 
@@ -341,12 +344,16 @@ class Serializer(object):
                 idx_ = idx
                 for k, v in obj.iteritems():
                     idx = idx_
-                    idx = self._tag_rep(idx, k, cur, v)
+                    idx = self._tag_rep(idx, check_tag(force_unicode(k)), cur, v)
                 return idx
         else:
             # extract tag name
-            idx, tag = self._val(idx, obj)
-            return self._tag_rep(idx, tag, cur, obj)
+            try:
+                idx, tag = self._val(idx, obj)
+            except InvalidValue as e:
+                exc_type, exc_value, exc_traceback = sys.exc_info()
+                raise InvalidTag(e.fmt, e.idx, "invalid tag"), None, exc_traceback
+            return self._tag_rep(idx, check_tag(force_unicode(tag)), cur, obj)
 
     def _tag(self, idx, cur, obj):
         """Handle a tag. `cur is None` implies this is the root tag."""

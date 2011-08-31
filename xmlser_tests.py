@@ -100,17 +100,17 @@ class SerializationTests(unittest.TestCase):
         self.cmp_listitem(ser, exp)
 
     def test_rep_list(self):
-        ser = xmlser.Serializer("<root<sub*?&?>>")
-        self.assertEqual(ser.serialize(['a', 'b']), "<root><sub>a</sub><sub>b</sub></root>")
+        ser = xmlser.Serializer("<root<sub*?>>")
+        self.assertEqual(ser.serialize(['a', 'b']), "<root><sub></sub><sub></sub></root>")
 
     def test_rep_dict(self):
-        ser = xmlser.Serializer("<root<sub*?=k.0=v.1>>")
+        ser = xmlser.Serializer("<root<sub*?>>")
         self.assertEqual(ser.serialize({'a':1, 'b':2}),
-                         '<root><sub k="a" v="1"></sub><sub k="b" v="2"></sub></root>')
+                         '<root><sub></sub><sub></sub></root>')
 
     def test_sub_dicttag(self):
-        ser = xmlser.Serializer("<root<~?&?>>")
-        self.assertEqual(ser.serialize({'a':1}), "<root><a>1</a></root>")
+        ser = xmlser.Serializer("<root<~?>>")
+        self.assertEqual(ser.serialize({'a':1}), "<root><a></a></root>")
 
     def test_ind_tag(self):
         ser = xmlser.Serializer("<?>")
@@ -131,6 +131,55 @@ class SerializationTests(unittest.TestCase):
     def test_empty_dictkeyrep(self):
         ser = xmlser.Serializer('<root<~?&?><a>>')
         self.assertEqual(ser.serialize({}), '<root><a></a></root>')
+
+    def test_badfmt_space(self):
+        for s in ['<root<s ub>>', '<r oot<sub>>', '<root >']:
+            ser = xmlser.Serializer(s)
+            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+
+    def test_badfmt_notag(self):
+        for s in ['<root<&text>>', '<&text>', '<root<<ssub>>']:
+            ser = xmlser.Serializer(s)
+            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+
+    def test_badfmt_noattrname(self):
+        for s in ['<root<=&text>>', '<=&text>', '<root<=<ssub>>>']:
+            ser = xmlser.Serializer(s)
+            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+
+    def test_badfmt_noattrval(self):
+        for s in ['<root<=a&text>>', '<=a&text>', '<root<=a<ssub>>>']:
+            ser = xmlser.Serializer(s)
+            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+
+    def test_badobj_noattr(self):
+        ser = xmlser.Serializer('<root&.attr>')
+        for o, e in [([], AttributeError), ({}, KeyError), (None, AttributeError)]:
+            self.assertRaises(e, ser.serialize, o)
+
+    def test_badobj_badtag(self):
+        ser = xmlser.Serializer('<root<?>>')
+        for s in ['', ' ', 'xml', 123, '123']:
+            try:
+                res = ser.serialize('')
+            except xmlser.SerializationFormatError:
+                self.fail("Serializing object with valid format string produced SerializationFormatError")
+            except ValueError:
+                pass
+            else:
+                self.fail("Serializing object to bad XML %r did not raise an exception" % res)
+
+    def test_badobj_baddictreptag(self):
+        ser = xmlser.Serializer('<root<~?>>')
+        for d in [{'':1}, {' ':1}, {'xml':1}, {123:1}, {'123':1}]:
+            try:
+                res = ser.serialize(d)
+            except xmlser.SerializationFormatError:
+                self.fail("Serializing object with valid format string produced SerializationFormatError")
+            except ValueError:
+                pass
+            else:
+                self.fail("Serializing object to bad XML %r did not raise an exception" % res)
 
 if __name__ == "__main__":
     unittest.main()
