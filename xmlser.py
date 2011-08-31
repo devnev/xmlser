@@ -131,6 +131,7 @@ class Serializer(object):
     def __init__(self, fmt):
         self.fmt = fmt
         super(Serializer, self).__init__()
+        self._tag(0, None, _skip)
 
     def _get(self, idx, obj):
         """After a dot or similar, look up a value"""
@@ -370,7 +371,8 @@ class Serializer(object):
         if not l or obj is _skip:
             # empty list or skipping, parse to get ending idx but do not use
             e = _Element(tag, [], [])
-            idx = self._intag(idx, e, _skip)
+            while self.fmt[idx] != '>':
+                idx = self._intag(idx, e, _skip)
         else:
             idx_ = idx
             for item in l:

@@ -139,23 +139,19 @@ class SerializationTests(unittest.TestCase):
 
     def test_badfmt_space(self):
         for s in ['<root<s ub>>', '<r oot<sub>>', '<root >']:
-            ser = xmlser.Serializer(s)
-            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+            self.assertRaises(xmlser.SerializationFormatError, xmlser.Serializer, s)
 
     def test_badfmt_notag(self):
         for s in ['<root<&text>>', '<&text>', '<root<<ssub>>']:
-            ser = xmlser.Serializer(s)
-            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+            self.assertRaises(xmlser.SerializationFormatError, xmlser.Serializer, s)
 
     def test_badfmt_noattrname(self):
         for s in ['<root<=&text>>', '<=&text>', '<root<=<ssub>>>']:
-            ser = xmlser.Serializer(s)
-            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+            self.assertRaises(xmlser.SerializationFormatError, xmlser.Serializer, s)
 
     def test_badfmt_noattrval(self):
         for s in ['<root<=a&text>>', '<=a&text>', '<root<=a<ssub>>>']:
-            ser = xmlser.Serializer(s)
-            self.assertRaises(xmlser.SerializationFormatError, ser.serialize, None)
+            self.assertRaises(xmlser.SerializationFormatError, xmlser.Serializer, s)
 
     def test_badobj_noattr(self):
         ser = xmlser.Serializer('<root&.attr>')
@@ -163,9 +159,9 @@ class SerializationTests(unittest.TestCase):
             self.assertRaises(e, ser.serialize, o)
 
     def test_badobj_badtag(self):
-        ser = xmlser.Serializer('<root<?>>')
         for s in ['', ' ', 'xml', 123, '123']:
             try:
+                ser = xmlser.Serializer('<root<?>>')
                 res = ser.serialize('')
             except xmlser.SerializationFormatError:
                 self.fail("Serializing object with valid format string produced SerializationFormatError")
@@ -175,9 +171,9 @@ class SerializationTests(unittest.TestCase):
                 self.fail("Serializing object to bad XML %r did not raise an exception" % res)
 
     def test_badobj_baddictreptag(self):
-        ser = xmlser.Serializer('<root<~?>>')
         for d in [{'':1}, {' ':1}, {'xml':1}, {123:1}, {'123':1}]:
             try:
+                ser = xmlser.Serializer('<root<~?>>')
                 res = ser.serialize(d)
             except xmlser.SerializationFormatError:
                 self.fail("Serializing object with valid format string produced SerializationFormatError")
