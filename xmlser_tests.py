@@ -36,6 +36,11 @@ class SerializationTests(unittest.TestCase):
         self.assertEqual(ser.serialize({'item':"a"}), exp_fmt % "a")
         self.assertEqual(ser.serialize({'item':u"ä"}), exp_fmt % u"ä")
 
+    def cmp_ser(self, lser, rser, obj):
+        lser = xmlser.Serializer(lser)
+        rser = xmlser.Serializer(rser)
+        self.assertEqual(lser.serialize(obj), rser.serialize(obj))
+
     def cmp_listitem(self, ser, exp_fmt):
         ser_ = ser
         for i in xrange(0, 5):
@@ -180,6 +185,35 @@ class SerializationTests(unittest.TestCase):
                 pass
             else:
                 self.fail("Serializing object to bad XML %r did not raise an exception" % res)
+
+    def test_cond_eqnum_empty(self):
+        self.cmp_ser('<root{?=1}>', '<root>', 1)
+        self.cmp_ser('<root{!?=1}>', '<root>', 1)
+        self.cmp_ser('<root{?=1}>', '<root{?=0}>', 1)
+        self.cmp_ser('<root{?=1}>', '<root{!?=0}>', 1)
+        self.cmp_ser('<root{1=?}>', '<root>', 1)
+        self.cmp_ser('<root{!1=?}>', '<root>', 1)
+        self.cmp_ser('<root{?=1}>', '<root{0=?}>', 1)
+        self.cmp_ser('<root{?=1}>', '<root{!0=?}>', 1)
+
+    def test_cond_eqnum_tag(self):
+        self.cmp_ser('<root{?=1<sub>}>', '<root<sub>>', 1)
+        self.cmp_ser('<root{?=1<sub>}>', '<root>', 0)
+
+    def test_cond_eqquoted(self):
+        self.cmp_ser('<root{?=1<sub>}>', '<root>', "1")
+        self.cmp_ser('<root{?="1"<sub>}>', '<root<sub>>', "1")
+
+    def test_cond_truth(self):
+        self.cmp_ser('<root{??<sub>}>', '<root>', 0)
+        self.cmp_ser('<root{??<sub>}>', '<root>', "")
+        self.cmp_ser('<root{??<sub>}>', '<root<sub>>', 1)
+        self.cmp_ser('<root{??<sub>}>', '<root<sub>>', "1")
+
+    def test_cond_contains(self):
+        self.cmp_ser('<root{?~1<sub>}>', '<root>', [])
+        self.cmp_ser('<root{?~1<sub>}>', '<root>', [0])
+        self.cmp_ser('<root{?~1<sub>}>', '<root<sub>>', [1])
 
 if __name__ == "__main__":
     unittest.main()

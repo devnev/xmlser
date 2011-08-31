@@ -44,6 +44,10 @@ class InvalidTag(SerializationFormatError):
     def __init__(self, fmt, idx, msg=None):
         SerializationFormatError.__init__(self, msg or "Invalid tag", fmt, idx)
 
+class InvalidCondition(SerializationFormatError):
+    def __init__(self, fmt, idx, msg=None):
+        SerializationFormatError.__init__(self, msg or "Invalid condition", fmt, idx)
+
 def force_unicode(txt):
     try:
         return unicode(txt)
@@ -122,7 +126,7 @@ _Element = collections.namedtuple('Element', 'tag attrs content')
 class Serializer(object):
 
     # special characters in format strings
-    _special = '*=<>?.&~"'
+    _special = '*=<>?.&~"{}'
 
     def __init__(self, fmt):
         self.fmt = fmt
@@ -170,7 +174,7 @@ class Serializer(object):
         else:
             raise InvalidAttribute(self.fmt, idx)
 
-    def _val(self, idx, obj):
+    def _val(self, idx, obj, nums=False):
         """Get a single value, either from a literal or from a lookup"""
 
         if self.fmt[idx] == '.':
@@ -205,6 +209,14 @@ class Serializer(object):
                 val += self.fmt[idx]
                 idx += 1
             return idx, val
+
+        elif nums and self.fmt[idx].isdigit():
+            # number, but only when nums=True
+            num = ""
+            while self.fmt[idx].isdigit():
+                num += self.fmt[idx]
+                idx += 1
+            return idx, int(num)
 
         else:
             raise InvalidValue(self.fmt, idx)
@@ -259,6 +271,57 @@ class Serializer(object):
 
         return idx
 
+    def _cond(self, idx, cur, obj):
+        """Handle a conditional area. idx must be on the '{'."""
+
+        if self.fmt[idx] != '{':
+            raise InvalidCondition(self.fmt, idx, "Expected '{'")
+        idx += 1
+
+        # determine negation
+        negate = False
+        if self.fmt[idx] == '!':
+            negate = True
+            idx += 1
+
+        # get left side
+        idx, lhs = self._val(idx, obj, nums=True)
+
+        # determine operator
+        import operator
+        binary, op = {
+            '=': (True, operator.eq),
+            '?': (False, operator.truth),
+            '<': (True, operator.lt),
+            '>': (True, operator.gt),
+            '~': (True, operator.contains),
+        }.get(self.fmt[idx], (False, None))
+        if op is None:
+            raise InvalidCondition(self.fmt, idx, "Unrecognized conditional operator")
+        idx += 1
+
+        # for binary ops, determine right side
+        rhs = None
+        if binary:
+            idx, rhs = self._val(idx, obj, nums=True)
+
+        # evaluate condition
+        if obj is _skip:
+            # already skipping, just continue
+            idx = self._intag(idx, cur, _skip)
+        elif binary and bool(op(lhs, rhs)) ^ negate:
+            idx = self._intag(idx, cur, obj)
+        elif not binary and bool(op(lhs)) ^ negate:
+            idx = self._intag(idx, cur, obj)
+        else:
+            # skip remainder of condition
+            idx = self._intag(idx, cur, _skip)
+
+        if self.fmt[idx] != '}':
+            raise InvalidCondition(self.fmt, idx, "Expected '}'")
+
+        return idx + 1
+
     def _intag(self, idx, cur, obj):
         """Handle children and attributes of tag."""
 
@@ -277,6 +340,12 @@ class Serializer(object):
 
         elif self.fmt[idx] == '>':
             return idx
+
+        elif self.fmt[idx] == '}':
+            return idx
+
+        elif self.fmt[idx] == '{':
+            return self._cond(idx, cur, obj)
 
         else:
             raise InvalidTag(self.fmt, idx, "Unrecognized character %s" % self.fmt[idx])
@@ -313,7 +382,7 @@ class Serializer(object):
                     cur.content.append(e)
 
         if self.fmt[idx] != '>':
-            raise InvalidTag(self.fmt, idx, "Tag not terminated with '>'")
+            raise InvalidTag(self.fmt, idx, "Expected '>'")
 
         if cur is None:
             # in special case of root, we return the idx and the element
