@@ -36,7 +36,7 @@ To run the examples below, start off with the following definition::
 
  >>> import xmlser
  >>> def ser(fmt, obj=None):
- ...     print xmlser.Serializer(fmt).serialize(obj)
+ ...     print xmlser.serialize(fmt, obj)
 
 We start off with a plain document containing only two tags::
 
@@ -94,7 +94,7 @@ Looking Up Values
 Attribute, key and index lookups can be performed using the dot (".") operator::
 
  >>> ser('<doc<item&.content>>', {"content": "Ich habe eine Nase!"})
- <doc><item>Ich habe eine Nas!</item></doc>
+ <doc><item>Ich habe eine Nase!</item></doc>
  >>> ser('<doc<item&.0>>', ["Chuchichästli"])
  <doc><item>Chuchichästli</item></doc>
 
@@ -103,21 +103,33 @@ They can easily be chained::
  >>> ser('<doc<item&.content.0>>', {"content": ["Kilimanjaro"]})
  <doc><item>Kilimanjaro</item></doc>
 
+When repeatingly accessing sub-objects of an object, a group with a lookup can
+shorten things::
+
+ >>> ser('<doc<item&.content.0><item&.content.1>>', {"content": ["Vinson Massif", "Puncak Jaya"]})
+ <doc><item>Vinson Massif</item><item>Puncak Jaya</item></doc>
+ >>> ser('<doc{.content<item&.0><item&.1>>}>', {"content": ["Vinson Massif", "Puncak Jaya"]})
+ <doc><item>Vinson Massif</item><item>Puncak Jaya</item></doc>
+
+Groups will come in handy again for conditionals.
+
 Repeating yourself
 ------------------
 
-Two forms of repetition are available: "list" and "dictkey". The difference
-lies in what is repeated: "list" creates many of the same tags, one for each
-list element. "dictkey" creates a tag corresponding to each key::
+Tag repetition can be performed over any iterable. If the iterable has an "items"
+method, it is called and the result is used for iteration. This allows
+iteration of mappings as lists of two-element tuples.
+
+Within the repeated tags, the current element from the repetition is the
+current object for lookups::
 
  >>> ser('<longest_rivers<river*?&?>>', [u"النيل", u"Amazonas", u"长/長江"])
  <longest_rivers><river>ﺎﻠﻨﻴﻟ</river><river>Amazonas</river><river>长/長江</river></longest_rivers>
- >>> ser('<person<~?&?>>', {"fullname": "Thomas Anderson", "title": "Mr.", "nick": "Neo"})
+ >>> ser('<person<.0*?&.1>>', {"fullname": "Thomas Anderson", "title": "Mr.", "nick": "Neo"})
  <person><nick>Neo</nick><fullname>Thomas Anderson</fullname><title>Mr.</title></person>
 
-Within the repeated tags, the current element from the repetition is the
-current object for lookups (in the case of "dictkey" repetitions, this is the
-corresponding value).
+A notable quirk about repetition is that despite the source iterable coming
+after the tag name, lookups in the tag name use the iterated items.
 
 Conditionals
 ------------

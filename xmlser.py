@@ -63,6 +63,10 @@ def force_unicode(txt):
             pass
     raise ValueError("Unable to force %s object %r to unicode" % (type(orig).__name__, orig))
 
+def compose(*funcs):
+    tail = reduce(lambda f1, f2: (lambda v: f1(f2(v))), funcs[:-1])
+    return lambda *args, **kwargs: tail(funcs[-1](*args, **kwargs))
+
 _xml_tag_badchr_re = re.compile('[<>&"\']|\\s')
 def check_tag(t):
     if not t:
@@ -117,388 +121,426 @@ class StreamWriteEncoder(object):
     def __getattr__(self, attr):
         return getattr(self.stream, attr)
 
-# special object used when skipping through the format string, e.g. because a
-# list was empty.
-_skip = "__skip"
+class Element(collections.namedtuple('Element', 'tag attrs content')):
+    def write_xml(self, unicode_stream):
+        unicode_stream.write(u'<')
+        unicode_stream.write(self.tag)
 
-_Element = collections.namedtuple('Element', 'tag attrs content')
+        for attr in self.attrs:
+            unicode_stream.write(u' ')
+            unicode_stream.write(attr[0])
+            unicode_stream.write(u'="')
+            unicode_stream.write(attr[1])
+            unicode_stream.write(u'"')
 
-class Serializer(object):
+        unicode_stream.write(u'>')
 
-    # special characters in format strings
-    _special = '*=<>?.&~"{}'
+        for child in self.content:
+            if hasattr(child, 'write_xml'):
+                child.write_xml(unicode_stream)
+            else:
+                unicode_stream.write(child)
+
+        unicode_stream.write(u'</')
+        unicode_stream.write(self.tag)
+        unicode_stream.write(u'>')
+
+class AttrLookup(object):
+
+    def __init__(self, keys):
+        self.keys = keys or []
+
+    def _lookup(self, obj, key):
+        if type(key) == int:
+            # int, try to use as index, then key
+            try:
+                return obj[key]
+            except KeyError:
+                return obj[str(key)]
+            except IndexError as e:
+                raise KeyError(str(e))
+        else:
+            # lookup as key if possible, else attribute
+            if hasattr(obj, "__getitem__"):
+                try:
+                    return obj[key]
+                except TypeError:
+                    pass
+            return getattr(obj, key)
+
+    def __call__(self, obj):
+        return reduce(self._lookup, self.keys, obj)
+
+class Literal(object):
+
+    def __init__(self, value):
+        self.value = value
+
+    def __call__(self, obj):
+        return self.value
+
+class List(object):
+    def __init__(self, handler):
+        self.handler = handler
+
+    def __call__(self, obj):
+        value = self.handler(obj)
+        if hasattr(value, 'items'):
+            return value.items()
+        elif type(value) == int:
+            return list(range(value))
+        else:
+            return value
+
+class Group(object):
+    def __init__(self, lookup, handlers):
+        self.lookup = lookup
+        self.handlers = handlers
+
+    def __call__(self, obj, cur):
+        obj = self.lookup(obj)
+        for handler in self.handlers:
+            handler(obj, cur)
+
+class Conditional(object):
+    def __init__(self, lhs, op, rhs, iftrue, iffalse):
+        self.lhs, self.op, self.rhs = lhs, op, rhs
+        self.iftrue, self.iffalse = iftrue, iffalse
+
+    def __call__(self, obj, cur):
+        if self.rhs:
+            res = self.op(self.lhs(obj), self.rhs(obj))
+        else:
+            res = self.op(self.lhs(obj))
+        if res:
+            self.iftrue(obj, cur)
+        elif self.iffalse is not None:
+            self.iffalse(obj, cur)
+
+class Attribute(object):
+    def __init__(self, attr, value):
+        self.attr, self.value = attr, value
+
+    def __call__(self, obj, cur):
+        cur.attrs.append((check_attr(force_unicode(self.attr(obj))), escape(force_unicode(self.value(obj)))))
+
+class Text(object):
+    def __init__(self, text):
+        self.text = text
+
+    def __call__(self, obj, cur):
+        cur.content.append(escape(force_unicode(self.text(obj))))
+
+class Tag(object):
+    def __init__(self, name, handlers):
+        self.name, self.handlers = name, handlers
+
+    def __call__(self, obj, cur):
+        tag = Element(check_tag(force_unicode(self.name(obj))), [], [])
+        for handler in self.handlers:
+            handler(obj, tag)
+        if cur:
+            cur.content.append(tag)
+        else:
+            return tag
+
+class Repetition(object):
+    def __init__(self, replist, handler):
+        self.replist, self.handler = replist, handler
+
+    def __call__(self, obj, cur):
+        cur_ = cur
+        if not cur:
+            cur_ = Element(":", [], [])
+        items = self.replist(obj)
+        for item in items:
+            self.handler(item, cur)
+        if not cur:
+            return cur_.content
+
+class Fragment(object):
+    def __init__(self, handlers):
+        self.handlers = handlers
+
+    def __call__(self, obj):
+        parent = Element(":", [], [])
+        for handler in self.handlers:
+            handler(obj, parent)
+
+        return parent.content
+
+class Document(object):
+    def __init__(self, handler):
+        self.handler = handler
+
+    def __call__(self, obj):
+        parent = Element(":", [], [])
+        self.handler(obj, parent)
+        return parent.content[0]
+
+class Compiler(object):
+
+    _ops = '<=&{~'
+    _ends = '>}'
+    _vals = '?."'
+    _special = '*'+_vals+_ops+_ends
 
     def __init__(self, fmt):
         self.fmt = fmt
-        super(Serializer, self).__init__()
-        self._tag(0, None, _skip)
 
-    def _get(self, idx, obj):
-        """After a dot or similar, look up a value"""
+    def _quoted(self, idx):
+        assert self.fmt[idx] == '"'
+        idx += 1
+        beg = idx
+        while self.fmt[idx] != '"':
+            if self.fmt[idx] == '\\':
+                # skip escaped characters
+                idx += 1
+            idx += 1
+        # decode escapes
+        return idx+1, self.fmt[beg:idx].decode('string_escape')
+
+    def _get(self, idx):
 
         if self.fmt[idx].isalpha():
             # identifier, could be dict key or attribute
-            attr = ""
+            beg = idx
             while self.fmt[idx].isalnum() or self.fmt[idx] == '_':
-                attr += self.fmt[idx]
                 idx += 1
-
-            # if skipping, do not peform lookup
-            if obj is _skip:
-                return idx, _skip
-
-            # try to lookup value for attr
-            if isinstance(obj, dict):
-                return idx, obj[attr]
-            else:
-                return idx, getattr(obj, attr)
+            return idx, self.fmt[beg:idx]
 
         elif self.fmt[idx].isdigit():
             # number, could be dict key or index
-            num = ""
+            beg = idx
             while self.fmt[idx].isdigit():
-                num += self.fmt[idx]
                 idx += 1
+            return idx, int(self.fmt[beg:idx])
 
-            # if skipping, do not peform lookup
-            if obj is _skip:
-                return idx, _skip
-
-            # try to lookup value for num
-            try:
-                return idx, obj[int(num)]
-            except KeyError:
-                return idx, obj[num]
-            except IndexError as e:
-                raise KeyError(str(e))
+        elif self.fmt[idx] == '"':
+            return self._quoted(idx)
 
         else:
             raise InvalidAttribute(self.fmt, idx)
 
-    def _val(self, idx, obj, nums=False):
-        """Get a single value, either from a literal or from a lookup"""
+    def _val(self, idx, **opts):
+        opts.setdefault('strings', True) # allow string values
+        opts.setdefault('unquoted', True) # allow unquoted literals (unquoted strings, numbers)
+        opts.setdefault('numbers', True) # allow numbers
+        assert len(opts) == 3
 
         if self.fmt[idx] == '.':
             # lookup
+            lookup = []
             while self.fmt[idx] == '.':
-                idx, obj = self._get(idx+1, obj)
-            return idx, obj
+                idx, key = self._get(idx+1)
+                lookup.append(key)
+            return idx, AttrLookup(lookup)
 
         elif self.fmt[idx] == '?':
-            # identity operation
-            return idx + 1, obj
+            # identity
+            return idx+1, AttrLookup([])
 
-        elif self.fmt[idx] == '"':
+        elif opts['strings'] and self.fmt[idx] == '"':
             # quoted string literal
-            val = ""
-            idx += 1
-            end = idx
-            while self.fmt[end] != '"':
-                if self.fmt[end] == '\\':
-                    # skip escaped characters
-                    end += 1
-                end += 1
-            val = self.fmt[idx:end]
-            # decode escapes
-            val = val.decode('string_escape')
-            return end+1, val
+            idx, val = self._quoted(idx)
+            return idx, Literal(val)
 
-        elif self.fmt[idx].isalpha():
+        elif opts['strings'] and opts['unquoted'] and self.fmt[idx].isalpha():
             # unquoted string literal
-            val = ""
+            beg = idx
             while self.fmt[idx] not in self._special and not self.fmt[idx].isspace():
-                val += self.fmt[idx]
                 idx += 1
-            return idx, val
+            return idx, Literal(self.fmt[beg:idx])
 
-        elif nums and self.fmt[idx].isdigit():
+        elif opts['numbers'] and opts['unquoted'] and self.fmt[idx].isdigit():
             # number, but only when nums=True
-            num = ""
+            beg = idx
             while self.fmt[idx].isdigit():
-                num += self.fmt[idx]
                 idx += 1
-            return idx, int(num)
+            return idx, Literal(int(self.fmt[beg:idx]))
 
         else:
             raise InvalidValue(self.fmt, idx)
 
-    def _list(self, idx, obj):
-        """Get a list for repetition."""
+    def _list(self, idx):
 
-        if self.fmt[idx] == '.':
-            # lookup object
-            while self.fmt[idx] == '.':
-                idx, obj = self._get(idx+1, obj)
-            # if its a mapping, get a (key, value) iterable
-            if hasattr(obj, 'items'):
-                obj = obj.items()
-            return idx, obj
+        idx, value = self._val(idx, strings=False)
+        return idx, List(value)
 
-        elif self.fmt[idx] == '?':
-            # identity operation
-            if hasattr(obj, 'items'):
-                obj = obj.items()
-            return idx + 1, obj
+    def _attr(self, idx):
 
-        elif self.fmt[idx].isdigit():
-            # repeat a fix number of times
-            num = ""
-            while self.fmt[idx].isdigit():
-                num += self.fmt[idx]
-                idx += 1
-            return idx, list(range(int(num)))
+        idx, attr = self._val(idx, numbers=False)
+        idx, val = self._val(idx, unquoted=False)
 
-        else:
-            raise InvalidRepetition(self.fmt, idx)
+        return idx, Attribute(attr, val)
 
-    def _attr(self, idx, cur, obj):
-        """Handle an attribute. idx must be on the '='."""
+    def _text(self, idx):
 
-        if self.fmt[idx] != '=':
-            raise InvalidAttribute(self.fmt, idx)
+        idx, text = self._val(idx, numbers=False)
+        return idx, Text(text)
+
+    def _group(self, idx):
+
+        lookup = []
+        while self.fmt[idx] == '.':
+            idx, key = self._get(idx+1)
+            lookup.append(key)
+
+        handlers = []
+        while self.fmt[idx] != '}':
+            idx, handler = self._intag(idx)
+            handlers.append(handler)
         idx += 1
 
-        try:
-            idx, attr = self._val(idx, obj)
-        except InvalidValue as e:
-            exc_type, exc_value, exc_traceback = sys.exc_info()
-            raise InvalidName(e.fmt, e.idx, "Invalid attribute name"), None, exc_traceback
+        return idx, Group(AttrLookup(lookup), handlers)
 
-        idx, v = self._val(idx, obj)
+    def _cond(self, idx):
 
-        # only actually add the attribute if we're not skipping
-        if obj is not _skip:
-            cur.attrs.append((check_attr(force_unicode(attr)), escape(force_unicode(v))))
-
-        return idx
-
-    def _cond(self, idx, cur, obj):
-        """Handle a conditional area. idx must be on the '{'."""
-
-        if self.fmt[idx] != '{':
-            raise InvalidCondition(self.fmt, idx, "Expected '{'")
-        idx += 1
-
-        # determine negation
         negate = False
         if self.fmt[idx] == '!':
             negate = True
             idx += 1
 
-        # get left side
-        idx, lhs = self._val(idx, obj, nums=True)
+        idx, lhs = self._val(idx, strings=False)
 
-        # determine operator
         import operator
         binary, op = {
-            '=': (True, operator.eq),
             '?': (False, operator.truth),
+            '=': (True, operator.eq),
             '<': (True, operator.lt),
             '>': (True, operator.gt),
-            '~': (True, operator.contains),
+            '/': (True, operator.contains),
         }.get(self.fmt[idx], (False, None))
         if op is None:
             raise InvalidCondition(self.fmt, idx, "Unrecognized conditional operator")
         idx += 1
 
-        # for binary ops, determine right side
+        if negate:
+            op = compose(operator.not_, op)
+
         rhs = None
         if binary:
-            idx, rhs = self._val(idx, obj, nums=True)
+            idx, rhs = self._val(idx)
 
-        # evaluate condition
-        if obj is _skip:
-            # already skipping, just continue
-            idx = self._intag(idx, cur, _skip)
-        elif binary and bool(op(lhs, rhs)) ^ negate:
-            idx = self._intag(idx, cur, obj)
-        elif not binary and bool(op(lhs)) ^ negate:
-            idx = self._intag(idx, cur, obj)
-        else:
-            # skip remainder of condition
-            idx = self._intag(idx, cur, _skip)
+        idx, iftrue = self._intag(idx)
 
-        if self.fmt[idx] != '}':
-            raise InvalidCondition(self.fmt, idx, "Expected '}'")
+        iffalse = None
+        if self.fmt[idx] == '~':
+            idx, iffalse = self._intag(idx+1)
 
-        return idx + 1
+        return idx, Conditional(lhs, op, rhs, iftrue, iffalse)
 
-    def _intag(self, idx, cur, obj):
-        """Handle children and attributes of tag."""
+    def _intag(self, idx):
 
         if self.fmt[idx] == '<':
-            return self._tag(idx, cur, obj)
+            return self._tag(idx+1)
 
         elif self.fmt[idx] == '=':
-            return self._attr(idx, cur, obj)
+            return self._attr(idx+1)
 
         elif self.fmt[idx] == '&':
-            idx += 1
-            idx, v = self._val(idx, obj)
-            if obj is not _skip:
-                cur.content.append(escape(force_unicode(v)))
-            return idx
-
-        elif self.fmt[idx] == '>':
-            return idx
-
-        elif self.fmt[idx] == '}':
-            return idx
+            return self._text(idx+1)
 
         elif self.fmt[idx] == '{':
-            return self._cond(idx, cur, obj)
+            return self._group(idx+1)
+
+        elif self.fmt[idx] == '~':
+            return self._cond(idx+1)
 
         else:
             raise InvalidTag(self.fmt, idx, "Unrecognized character %s" % self.fmt[idx])
 
-    def _tag_rep(self, idx, tag, cur, obj):
-        """Handle possible repetition of tag. `cur is None` implies this is the root tag."""
+    def _tag(self, idx, single=False):
 
-        try:
-            tag = check_tag(force_unicode(tag))
-        except ValueError as e:
-            raise InvalidName(self.fmt, idx, str(e))
+        idx, name = self._val(idx, numbers=False)
 
-        # handle repetition
-        if self.fmt[idx] == '*' and cur is None:
-            raise InvalidRepetition("Cannot repeat root tag")
+        replist = None
+        if self.fmt[idx] == '*' and single:
+            raise InvalidTag(self.fmt, idx, "Root tag cannot be repeated")
         if self.fmt[idx] == '*':
-            idx += 1
-            idx, l = self._list(idx, obj)
-        else:
-            l = [obj]
+            idx, replist = self._list(idx+1)
 
-        if not l or obj is _skip:
-            # empty list or skipping, parse to get ending idx but do not use
-            e = _Element(tag, [], [])
-            while self.fmt[idx] != '>':
-                idx = self._intag(idx, e, _skip)
-        else:
-            idx_ = idx
-            for item in l:
-                e = _Element(tag, [], [])
-                idx = idx_
-                while self.fmt[idx] != '>':
-                    idx = self._intag(idx, e, item)
-                if cur is not None:
-                    cur.content.append(e)
-
-        if self.fmt[idx] != '>':
-            raise InvalidTag(self.fmt, idx, "Expected '>'")
-
-        if cur is None:
-            # in special case of root, we return the idx and the element
-            return idx + 1, e
-        else:
-            return idx + 1
-
-
-    def _tag_keyrep(self, idx, cur, obj):
-        """
-        Handle dict-based tag generation (key is tag, value is inner object).
-        `cur is None` implies this is the root tag.
-        """
-
-        tag = ""
-
-        # handle dict-based tag generation
-        if self.fmt[idx] == '~' and cur is None:
-            raise InvalidRepetition("Cannot have multiple root tags")
-        if self.fmt[idx] == '~':
-            idx += 1
-            idx, obj = self._val(idx, obj)
-            if not obj or obj is _skip:
-                # empty dict or skipping, parse to get end position but discard
-                # ":" is just an arbitrary valid tag name, it is discarded anyway
-                return self._tag_rep(idx, ":", cur, _skip)
-            else:
-                idx_ = idx
-                for k, v in obj.iteritems():
-                    idx = idx_
-                    idx = self._tag_rep(idx, check_tag(force_unicode(k)), cur, v)
-                return idx
-        else:
-            # extract tag name
-            try:
-                idx, tag = self._val(idx, obj)
-            except InvalidValue as e:
-                exc_type, exc_value, exc_traceback = sys.exc_info()
-                raise InvalidTag(e.fmt, e.idx, "invalid tag"), None, exc_traceback
-            return self._tag_rep(idx, check_tag(force_unicode(tag)), cur, obj)
-
-    def _tag(self, idx, cur, obj):
-        """Handle a tag. `cur is None` implies this is the root tag."""
-
-        if self.fmt[idx] != '<':
-            raise InvalidTag(self.fmt, idx)
-
+        handlers = []
+        while self.fmt[idx] != '>':
+            idx, handler = self._intag(idx)
+            handlers.append(handler)
         idx += 1
 
-        return self._tag_keyrep(idx, cur, obj)
+        tag = Tag(name, handlers)
 
-    def _write(self, stream, tree):
-
-        stream.write(u'<')
-        stream.write(tree.tag)
-
-        for attr in tree.attrs:
-            stream.write(u' ')
-            stream.write(attr[0])
-            stream.write(u'="')
-            stream.write(attr[1])
-            stream.write(u'"')
-
-        stream.write(u'>')
-
-        for child in tree.content:
-            if isinstance(child, _Element):
-                self._write(stream, child)
-            else:
-                stream.write(child)
-
-        stream.write(u'</')
-        stream.write(tree.tag)
-        stream.write(u'>')
-
-    def serialize(self, obj, stream=None, encoding=None):
-        """
-        Serialize an object to XML using this serializer's format string.
-
-        If a stream is given, the result is encoded (encoding defaults to
-        sys.getfilesystemencoding) and written to the stream.
-
-        If no stream is given, the result is returned, either as a unicode
-        string or encoded using the requested encoding.
-
-        In any case, if the result is encoded, it is prefixed with an xml
-        version tag containing the encoding, e.g. for UTF-8:
-            <?xml version="1.0" encoding="UTF-8" ?>
-        """
-        if stream is None and encoding is None:
-            _stream = _ListStream()
-        elif stream is None:
-            try:
-                from cStringIO import StringIO as sio
-            except ImportError:
-                from StringIO import StringIO as sio
-            _stream = StreamWriteEncoder(sio(), encoding)
+        if replist is None:
+            return idx, tag
         else:
-            if encoding is None:
-                encoding = sys.getfilesystemencoding()
-            _stream = StreamWriteEncoder(stream, encoding)
+            return idx, Repetition(replist, tag)
+
+    def compile(self, single_root=True):
+        idx = 0
+        handlers = []
 
         try:
-            idx, tree = self._tag(0, None, obj)
+            if single_root and self.fmt[idx] == '<':
+                idx, handler = self._tag(idx+1, True)
+                handlers = [handler]
+            else:
+                while self.fmt[idx] == '<':
+                    idx, handler = self._tag(idx+1, single_root)
+                    handlers.append(handler)
         except IndexError:
-            raise SerializationFormatError("Unexpected end of format", self.fmt, len(self.fmt))
+            exc_type, exc_value, exc_traceback = sys.exc_info()
+            raise SerializationFormatError("Unexpected end of format", self.fmt, len(self.fmt)), None, exc_traceback
+
         if idx != len(self.fmt):
-            raise SerializationFormatError("Tralining format characters", self.fmt, idx)
+            raise SerializationFormatError("Unprocessed tail", self.fmt, idx)
+        if single_root:
+            assert len(handlers) == 1
+            return Document(handlers[0])
+        else:
+            return Fragment(handlers)
 
-        if encoding is not None:
-            _stream.write('<?xml version="1.0" encoding="%s"?>' % encoding)
-        self._write(_stream, tree)
-        if stream is None:
-            res = _stream.getvalue()
-            _stream.close()
-            return res
+    def __call__(self, single_root=True):
+        return self.compile(single_root)
 
+def write_document(tree, stream=None, encoding=None):
+    """
+    If a stream is given, the result is encoded (encoding defaults to
+    sys.getfilesystemencoding) and written to the stream.
+
+    If no stream is given, the result is returned, either as a unicode
+    string or encoded using the requested encoding.
+    """
+
+    if stream is None and encoding is None:
+        _stream = _ListStream()
+    elif stream is None:
+        try:
+            from cStringIO import StringIO as sio
+        except ImportError:
+            from StringIO import StringIO as sio
+        _stream = StreamWriteEncoder(sio(), encoding)
+    else:
+        if encoding is None:
+            encoding = sys.getfilesystemencoding()
+        _stream = StreamWriteEncoder(stream, encoding)
+
+    if encoding is not None and isinstance(tree, Document):
+        _stream.write('<?xml version="1.0" encoding="%s"?>' % encoding)
+    tree.write_xml(_stream)
+
+    if stream is None:
+        res = _stream.getvalue()
+        _stream.close()
+        return res
+
+def serialize(fmt, obj, stream=None, encoding=None):
+    if not hasattr(fmt, 'compile'):
+        fmt = Compiler(fmt)
+    builder = fmt.compile()
+    return write_document(builder(obj), stream, encoding)
+
+def make_serializer(fmt):
+    if not hasattr(fmt, 'compile'):
+        fmt = Compiler(fmt)
+    builder = fmt.compile()
+    def serialize(obj, stream=None, encoding=None):
+        return write_document(builder(obj), stream, encoding)
+    return serialize
