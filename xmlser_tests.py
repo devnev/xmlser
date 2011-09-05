@@ -164,7 +164,7 @@ class SerializationTests(unittest.TestCase):
     def test_badobj_badtag(self):
         for s in ['', ' ', 'xml', 123, '123']:
             try:
-                res = xmlser.serialize('<root<?>>', '')
+                res = xmlser.serialize('<root<?>>', s)
             except xmlser.SerializationFormatError:
                 self.fail("Serializing object with valid format string produced SerializationFormatError")
             except ValueError:
