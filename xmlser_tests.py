@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import xmlser
+import xmlser.exc
 import unittest
 
 class SerializationTests(unittest.TestCase):
@@ -142,19 +143,19 @@ class SerializationTests(unittest.TestCase):
 
     def test_badfmt_space(self):
         for s in ['<root<s ub>>', '<r oot<sub>>', '<root >']:
-            self.assertRaises(xmlser.SerializationFormatError, xmlser.make_serializer, s)
+            self.assertRaises(xmlser.exc.SerializationFormatError, xmlser.make_serializer, s)
 
     def test_badfmt_notag(self):
         for s in ['<root<&text>>', '<&text>', '<root<<ssub>>']:
-            self.assertRaises(xmlser.SerializationFormatError, xmlser.make_serializer, s)
+            self.assertRaises(xmlser.exc.SerializationFormatError, xmlser.make_serializer, s)
 
     def test_badfmt_noattrname(self):
         for s in ['<root<=&text>>', '<=&text>', '<root<=<ssub>>>']:
-            self.assertRaises(xmlser.SerializationFormatError, xmlser.make_serializer, s)
+            self.assertRaises(xmlser.exc.SerializationFormatError, xmlser.make_serializer, s)
 
     def test_badfmt_noattrval(self):
         for s in ['<root<=a&text>>', '<=a&text>', '<root<=a<ssub>>>']:
-            self.assertRaises(xmlser.SerializationFormatError, xmlser.make_serializer, s)
+            self.assertRaises(xmlser.exc.SerializationFormatError, xmlser.make_serializer, s)
 
     def test_badobj_noattr(self):
         ser = xmlser.make_serializer('<root&.attr>')
@@ -165,7 +166,7 @@ class SerializationTests(unittest.TestCase):
         for s in ['', ' ', 'xml', 123, '123']:
             try:
                 res = xmlser.serialize('<root<?>>', s)
-            except xmlser.SerializationFormatError:
+            except xmlser.exc.SerializationFormatError:
                 self.fail("Serializing object with valid format string produced SerializationFormatError")
             except ValueError:
                 pass
@@ -176,7 +177,7 @@ class SerializationTests(unittest.TestCase):
         for d in [{'':1}, {' ':1}, {'xml':1}, {123:1}, {'123':1}]:
             try:
                 res = xmlser.serialize('<root<.0*?&.1>>', d)
-            except xmlser.SerializationFormatError:
+            except xmlser.exc.SerializationFormatError:
                 self.fail("Serializing object with valid format string produced SerializationFormatError")
             except ValueError:
                 pass
