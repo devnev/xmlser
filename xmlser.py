@@ -283,7 +283,7 @@ class Compiler(object):
     _ops = '<=&{~'
     _ends = '>}'
     _vals = '?."'
-    _special = '*'+_vals+_ops+_ends
+    _special = '*/'+_vals+_ops+_ends
 
     def __init__(self, fmt):
         self.fmt = fmt
