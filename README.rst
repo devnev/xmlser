@@ -134,7 +134,57 @@ after the tag name, lookups in the tag name use the iterated items.
 Conditionals
 ------------
 
-TODO
+Conditionals start with a tilde ("~") character, followed by the condition, the
+true case and optionally another tilde and the false case::
+
+ >>> ser('<doc~??<item&?>>', 'hello')
+ <doc><item>hello</item></doc>
+ >>> ser('<doc~??<item&?>>', '')
+ <doc></doc>
+
+Operators are infix, i.e. preceded by the first parameter. Four conditional
+operators are available:
+
++--------------+----------+---------+-----------------------------------------+
+| Name         | Operator | Arity   | Description                             |
++==============+==========+=========+=========================================+
+| truth        | ?        | unary   | Uses Python's bool constructor.         |
++--------------+----------+---------+-----------------------------------------+
+| equals       | =        | binary  |                                         |
++--------------+----------+---------+-----------------------------------------+
+| less-than    | <        | binary  |                                         |
++--------------+----------+---------+-----------------------------------------+
+| greater-than | >        | binary  |                                         |
++--------------+----------+---------+-----------------------------------------+
+| contains     | /        | binary  | a/b <=> b in a                          |
++--------------+----------+---------+-----------------------------------------+
+
+Else & Else If
+~~~~~~~~~~~~~~
+
+Else clauses are made by adding a another tilde after the true-case, followed
+by the false-case::
+
+ >>> ser('<doc<item~??&?~&world>>', 'hello')
+ <doc><item>hello</item></doc>
+ >>> ser('<doc<item~??&?~&world>>', '')
+ <doc><item>world</item></doc>
+
+Thus, else-if chains can be made simply by beginning another conditional within
+the else clause::
+
+ >>> ser('<doc<part*4~?=0&Hello~~?=1", "~~?=2World~"!">>')
+ <doc><part>Hello</part><part>, </part><part>World</part><part>!</part></doc>
+
+Finally, grouping with ``{`` and ``}`` allow for complex expressions within
+conditionals::
+
+ >>> ser('<person<.0*?~.0=name{.1<.0*?&.1><fullname&.givenname&" "&.surname>}~~.0=groups<group*.1&?>~&.1>>',
+         { 'name': {'givenname': 'John', 'surname': 'Smith'},
+           'groups': ['employees', 'generic'],
+           'birthday': '1970-01-01',
+         })
+ <person><birthday>1970-01-01</birthday><name><givenname>John</givenname><surname>Smith</surname><fullname>John Smith</fullname></name><groups><group>employees</group><group>generic</group></groups></person>
 
 Exceptions
 ----------
